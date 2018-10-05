@@ -1,0 +1,209 @@
+---
+title: "Practical Machine Learning_Peer Graded"
+author: "Ruthvik Ravindra"
+date: "October 5, 2018"
+output: 
+  html_document: default
+  html_notebook:
+    theme: cosmo
+    toc: yes
+    toc_float: yes
+    fig_width: 5
+    fig_heigth: 5
+    code_folding: hide
+---
+
+
+
+
+# Get the data
+
+```{r}
+data_dir = "./data"
+training_url = "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+test_url = "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+training_file = "pml-training.csv"
+test_file = "pml-test.csv"
+
+if (!file.exists(data_dir)) {
+  dir.create(data_dir)
+}
+if (!file.exists(file.path(data_dir, training_file))) {
+  download.file(training_url, destfile=file.path(data_dir, training_file))
+}
+if (!file.exists(file.path(data_dir, test_file))) {
+  download.file(test_url, destfile=file.path(data_dir, test_file))
+}
+```
+
+## Read the Data
+
+Load the data into 2 different data frames
+
+```{r}
+train <- read.csv(file.path(data_dir, training_file))
+test <- read.csv(file.path(data_dir, test_file))
+dim(train)
+dim(test)
+head(train)
+```
+
+## Clean the data
+
+Check if in the observations are present NA values or missing OBS that can raise errors/bias during the model training.
+
+```{r}
+library(dplyr)
+sum(complete.cases(train))
+```
+
+### Eliminate the columns with NA/missing values
+
+Let's see colnames
+
+```{r}
+colnames(train)
+plot(colMeans(is.na(train)))
+```
+
+There are columns with a lot of missing values.
+
+We will reatain only the columns without NA values
+
+First covert all the data in NUMERIC form to coerce the empty factor to NA
+
+```{r}
+trainClasse = train$classe
+trainRaw = train[, sapply(train, is.numeric)]
+testRaw = test[, sapply(test, is.numeric)]
+```
+
+Remove columns with NA values
+
+```{r}
+trainFilter <- trainRaw[, colSums(is.na(trainRaw)) == 0]
+# Attach Classe variable
+trainFilter$classe = trainClasse
+testFilter <- testRaw[, colSums(is.na(testRaw)) == 0]
+```
+
+Dimension
+
+```{r}
+dim(trainFilter)
+dim(testFilter)
+```
+
+Removing other unuseful columns like username, timestamp and ID
+
+```{r}
+unwanted = !grepl("X|timestamp", colnames(trainFilter))
+cols = colnames(trainFilter)[unwanted]
+trainFilter = trainFilter %>%
+  select(cols)
+
+unwanted = !grepl("X|timestamp", colnames(testFilter))
+cols = colnames(testFilter)[unwanted]
+testFilter = testFilter %>%
+  select(cols)
+```
+
+Get dimension of the filtered dataset
+
+```{r}
+dim(trainFilter)
+dim(testFilter)
+```
+
+## Slice the data
+
+We will slice the Training data into **Training** and **Validation** set using the 80-20 rule.
+
+```{r}
+set.seed(1234)
+library(lubridate)
+library(caret)
+inTrain <- createDataPartition(trainFilter$classe, p=0.70, list=F)
+trainData <- trainFilter[inTrain, ]
+validationData <- trainFilter[-inTrain, ]
+dim(trainData)
+```
+
+# Data modeling
+
+We will fit a model using **Random Forest** and **Boosting** which are popular for several reasons:
+
+1. With tree-based models, **you can safely ignore** predictors correlation issues
+
+2. Zero- and Near Zero-Variance Predictors **does not** imply on tree-based models
+
+3. As each feature is processed separately, and the possible splits of the data don't depend on scaling, no preprocessing like normalization or standardization of features is needed for decision tree algorithms.
+
+## Random forest
+
+### Model
+
+```{r}
+library(rpart)
+controlRf <- trainControl(method="cv", 5, allowParallel = TRUE)
+modelRf <- train(classe ~ ., data=trainData, method="rf", trControl=controlRf, ntree=250)
+modelRf
+```
+
+### Performance of the model on the validation data set
+
+```{r}
+predict_rf <- predict(modelRf, validationData)
+confusionMatrix(validationData$classe, predict_rf)
+
+```
+
+Very accurate model to classify **classe** feature
+
+## Boosting
+
+```{r}
+controlGBM <- trainControl(method="cv", 5, allowParallel = TRUE)
+modelGBM <- train(classe ~ ., data=trainData, method="gbm", trControl=controlGBM)
+```
+
+```{r}
+modelGBM
+```
+
+### Performance of the model on the validation data set
+
+```{r}
+predict_GBM <- predict(modelGBM, validationData)
+confusionMatrix(validationData$classe, predict_GBM)
+```
+
+With Random Forest, we reach a better accuracy on validation data.
+
+Only 2 mislabeled prediction A->B
+
+# Compare models
+
+```{r}
+# collect resamples
+model_results <- resamples(list(RF=modelRf, GBM=modelGBM))
+# summarize the distributions
+summary(model_results)
+# boxplots of results
+bwplot(model_results)
+# dot plots of results
+dotplot(model_results)
+```
+
+# Predict Test data with RF and GBM
+
+```{r}
+resultRf <- predict(modelRf, testFilter[, -length(names(testFilter))])
+resultGBM <- predict(modelGBM, testFilter[, -length(names(testFilter))])
+resultRf
+resultGBM
+confusionMatrix(resultRf, resultGBM)
+```
+
+
+Finally the model predict the TEST data in the same way but Random Forest works better on the training data.
